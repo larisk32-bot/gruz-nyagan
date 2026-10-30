@@ -51,6 +51,13 @@ section{padding:72px 0}
 .f input,.f select,.f textarea{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;width:100%}
 .f input:focus,.f select:focus,.f textarea:focus{outline:none;border-color:var(--y)}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ac{position:relative}
+.sug{position:absolute;left:0;right:0;top:100%;z-index:20;list-style:none;background:#1f1f22;border:1px solid var(--line);border-radius:12px;margin-top:4px;overflow:hidden;display:none;box-shadow:0 14px 30px rgba(0,0,0,.5)}
+.sug.on{display:block}
+.sug li{padding:10px 14px;font-size:15px;cursor:pointer;border-bottom:1px solid var(--line)}
+.sug li:last-child{border:0}
+.sug li:hover,.sug li.act{background:#2b2b2f}
+.sug li small{display:block;color:var(--muted);font-size:12px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:9px 14px;font-weight:800;font-size:14px;color:var(--muted);cursor:pointer}
 .chip.on{background:var(--y);border-color:var(--y);color:#111}
@@ -106,6 +113,7 @@ footer{padding:24px 0 30px;color:var(--muted);font-size:14px}
 .kb button:hover,.kb a:hover{background:#3a6a99}
 .kb .wait{background:#4a3a12;color:var(--y)}
 .cfoot{padding:8px 12px;background:#17212b;color:#5f7183;font:600 12px Manrope;text-align:center}
+@media (max-width:600px){.addr2{grid-template-columns:1fr}}
 @media (max-width:900px){
   .hero .wrap,.order,.miss{grid-template-columns:1fr}.price{position:static}
   .cbox{grid-template-columns:1fr}.facts{grid-template-columns:1fr 1fr}
@@ -138,7 +146,8 @@ footer{padding:24px 0 30px;color:var(--muted);font-size:14px}
       <div class="head"><h2>Заявка <span>за 1 минуту</span></h2><p>Не дозвонились? Мы часто за рулём или на погрузке. Оставьте заявку: она сразу придёт нам в Telegram, и свободный водитель перезвонит.</p></div>
       <div class="order">
         <div class="card" id="form">
-          <div class="row2"><div class="f"><label for="from">Откуда *</label><input id="from" placeholder="Улица, дом"></div><div class="f"><label for="to">Куда *</label><input id="to" placeholder="Улица, дом или город"></div></div>
+          <div class="row2 addr2"><div class="f ac"><label for="from">Откуда *</label><input id="from" placeholder="Начните вводить: Ленина 5" autocomplete="off"><ul class="sug" id="sug-from"></ul></div><div class="f ac"><label for="to">Куда *</label><input id="to" placeholder="Улица, дом или город" autocomplete="off"><ul class="sug" id="sug-to"></ul></div></div>
+          <div id="mapBox" style="display:none;margin:-4px 0 14px"><iframe id="map" title="Маршрут" loading="lazy" style="width:100%;height:240px;border:0;border-radius:14px;background:#222"></iframe><p class="note" id="routeInfo" style="margin-top:6px"></p></div>
           <div class="f"><label>Поездка</label><div class="chips" id="trip"><button class="chip on" data-v="city" type="button">🏙 По Нягани</button><button class="chip" data-v="inter" type="button">🛣 Межгород</button></div></div>
           <div class="f" id="kmBox" style="display:none"><label for="km">Расстояние в одну сторону, км</label><input id="km" inputmode="numeric" placeholder="Например: 260"><small style="color:var(--muted);font-size:12px">Не знаете? Посмотрите в <a href="https://yandex.ru/maps/" target="_blank" rel="noopener" style="color:var(--y)">Яндекс Картах</a>, или водитель посчитает сам</small></div>
           <div class="f"><label>Когда</label><div class="chips" id="when"><button class="chip on" data-v="Сейчас" type="button">⚡ Сейчас</button><button class="chip" data-v="Сегодня" type="button">Сегодня ко времени</button><button class="chip" data-v="Завтра" type="button">Завтра</button><button class="chip" data-v="Другая дата" type="button">Другая дата</button></div></div>
@@ -234,11 +243,47 @@ function calc(){const e=est();
 document.querySelectorAll('.chips').forEach(g=>g.addEventListener('click',e=>{const c=e.target.closest('.chip');if(!c)return;g.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===c));
   if(g.id==='when')$('timeBox').style.display=c.dataset.v==='Сейчас'?'none':'flex';if(g.id==='trip')calc()}));
 ['hours','movers'].forEach(id=>$(id).onchange=calc);$('km').oninput=calc;calc();
+
+// ── подсказки адресов (OpenStreetMap/Photon) и маршрут (OSRM + виджет Яндекс Карт) ──
+// в рабочей версии — DaData или Геосаджест Яндекса с ключом заказчика
+const NYA={lat:62.142,lon:65.39};
+const GEO={from:null,to:null};
+function fmtAddr(pp){const city=pp.city||pp.name;
+  if(pp.type==='house'||pp.housenumber)return {t:`${pp.street||pp.name}${pp.housenumber?', '+pp.housenumber:''}`,sub:[pp.city,pp.state].filter(Boolean).join(', ')};
+  if(pp.type==='street')return {t:pp.name,sub:pp.city||''};
+  return {t:city,sub:pp.state||'',city:true}}
+function setupAC(id){const inp=$(id),ul=$('sug-'+id);let tmr=null,items=[],act=-1;
+  const close=()=>{ul.classList.remove('on');act=-1};
+  inp.addEventListener('input',()=>{GEO[id]=null;updateRoute();clearTimeout(tmr);const q=inp.value.trim();if(q.length<3){close();return}
+    tmr=setTimeout(async()=>{
+      // ищем везде, но адреса Нягани — наверху списка
+      const u=`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12&lat=${NYA.lat}&lon=${NYA.lon}&layer=house&layer=street&layer=city&layer=locality&layer=district`;
+      try{const d=await (await fetch(u)).json();const seen=new Set();
+        items=d.features.map(f=>({...fmtAddr(f.properties),c:[f.geometry.coordinates[1],f.geometry.coordinates[0]],ny:(f.properties.city||f.properties.name||'')==='Нягань'}))
+          .filter(x=>x.t&&!seen.has(x.t+x.sub)&&seen.add(x.t+x.sub)).sort((x,y)=>(y.ny-x.ny)).slice(0,6);
+        ul.innerHTML=items.length?items.map((x,i)=>`<li data-i="${i}">${esc(x.t)}<small>${esc(x.sub)}</small></li>`).join(''):'<li style="cursor:default;color:var(--muted)">Не нашли, впишите как есть</li>';ul.classList.add('on')}catch(e){close()}},300)});
+  ul.addEventListener('mousedown',e=>{const li=e.target.closest('li[data-i]');if(!li)return;e.preventDefault();const x=items[+li.dataset.i];
+    inp.value=x.t+(!x.city&&x.sub&&!/Нягань/.test(x.sub)?', '+x.sub.split(',')[0]:'');GEO[id]=x.c;close();updateRoute()});
+  inp.addEventListener('keydown',e=>{const lis=[...ul.querySelectorAll('li[data-i]')];if(!lis.length||!ul.classList.contains('on'))return;
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();act=(act+(e.key==='ArrowDown'?1:-1)+lis.length)%lis.length;lis.forEach((l,i)=>l.classList.toggle('act',i===act))}
+    else if(e.key==='Enter'&&act>=0){e.preventDefault();lis[act].dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))}else if(e.key==='Escape')close()});
+  inp.addEventListener('blur',()=>setTimeout(close,150))}
+setupAC('from');setupAC('to');
+let routeReq=0;
+async function updateRoute(){const a=GEO.from,b=GEO.to;if(!a||!b){$('mapBox').style.display='none';return}
+  $('mapBox').style.display='block';$('map').src=`https://yandex.ru/map-widget/v1/?rtext=${a[0]},${a[1]}~${b[0]},${b[1]}&rtt=auto`;
+  const my=++routeReq;$('routeInfo').textContent='Считаем расстояние по дорогам…';
+  try{const r=await (await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=false`)).json();if(my!==routeReq)return;
+    const km=Math.round(r.routes[0].distance/1000),h=r.routes[0].duration/3600;
+    $('routeInfo').textContent=`≈ ${km} км по дорогам, в пути ~${h<1?Math.max(5,Math.round(h*60))+' мин':h.toFixed(1).replace('.',',')+' ч'}`;
+    if(km>=40&&pick('trip')!=='inter'){document.querySelector('#trip .chip[data-v=inter]').click()}
+    if(pick('trip')==='inter'){$('km').value=km;calc()}}
+  catch(e){$('routeInfo').textContent='Маршрут на карте выше; расстояние водитель уточнит'}}
 let O=null;
 $('send').onclick=()=>{const v=id=>$(id).value.trim(),when=pick('when');
   const miss=!v('from')?'Укажите, откуда забрать':!v('to')?'Укажите, куда везти':pick('trip')==='inter'&&!(+v('km')>0)?'Укажите расстояние в км (примерно)':when!=='Сейчас'&&!v('time')?'Укажите дату и время':!v('name')?'Укажите имя':v('phone').replace(/\D/g,'').length<10?'Укажите телефон':'';
   if(miss){$('err').textContent=miss;$('err').style.display='block';return}$('err').style.display='none';
-  O={no:Math.floor(100+Math.random()*900),from:v('from'),to:v('to'),when:when==='Сейчас'?'⚡ сейчас':when+' '+v('time'),what:pick('what'),hours:+v('hours'),movers:+v('movers'),...est(),floor:v('floor'),name:v('name'),phone:v('phone'),note:v('note')};
+  O={no:Math.floor(100+Math.random()*900),from:v('from'),to:v('to'),when:when==='Сейчас'?'⚡ сейчас':when+' '+v('time'),what:pick('what'),hours:+v('hours'),movers:+v('movers'),...est(),fromC:GEO.from,toC:GEO.to,floor:v('floor'),name:v('name'),phone:v('phone'),note:v('note')};
   $('no').textContent=O.no;$('form').style.display='none';$('done').style.display='block';startFlow()};
 $('again').onclick=()=>{$('done').style.display='none';$('form').style.display='block'};
 $('openFlow').onclick=()=>$('flow').classList.add('on');
@@ -255,8 +300,9 @@ function addMsg(chat,html,kb,sys){const cb=document.querySelector(`#c-${chat} .c
 const drop=chat=>document.querySelectorAll(`#c-${chat} .kb`).forEach(k=>k.remove());
 const card=o=>`🆕 <b>Заявка №${o.no}</b> · ${esc(o.when)}\n📍 <b>Откуда:</b> ${esc(o.from)}\n🏁 <b>Куда:</b> ${esc(o.to)}\n📦 ${esc(o.what)}${o.inter?' · 🛣 межгород '+o.km+' км':' · ~'+o.hours+' ч'}${o.movers?' · грузчиков: '+o.movers:''}\n💰 ≈ ${rub(o.total)}${o.floor?'\n🏢 '+esc(o.floor):''}\n👤 ${esc(o.name)}, ${esc(o.phone)}${o.note?'\n💬 '+esc(o.note):''}`;
 // межгород — без «Нягань,» перед адресом назначения
-const route=o=>`<a href="https://yandex.ru/maps/?rtext=${encodeURIComponent('Нягань, '+o.from)}~${encodeURIComponent((/ск$|город|г\./i.test(o.to)?'':'Нягань, ')+o.to)}" target="_blank" rel="noopener">📍 Маршрут</a><a href="tel:${esc(o.phone.replace(/[^\d+]/g,''))}">📞 Клиенту</a>`;
-const bossKb=(o,w)=>`<button data-a="self" data-w="${w}">🚚 Беру сам</button>${DRIVERS.map(d=>`<button data-a="give" data-w="${w}" data-n="${d}">👉 Отдать: ${d}</button>`).join('')}<button data-a="later" data-w="${w}">📞 Перезвоню через 10 мин</button><button data-a="no" data-w="${w}">❌ Отказать</button>${w==='main'?'<button class="wait" data-a="newdrv" data-w="main">➕ Подключить водителя</button>':''}${route(o)}`;
+const rpt=(c,t,city)=>c?`${c[0]},${c[1]}`:encodeURIComponent((city?'Нягань, ':'')+t);
+const route=o=>`<a href="https://yandex.ru/maps/?rtext=${rpt(o.fromC,o.from,true)}~${rpt(o.toC,o.to,!o.inter)}&rtt=auto" target="_blank" rel="noopener">📍 Маршрут</a><a href="tel:${esc(o.phone.replace(/[^\d+]/g,''))}">📞 Клиенту</a>`;
+const bossKb=(o,w)=>`<button data-a="self" data-w="${w}">🚚 Беру сам</button>${DRIVERS.map(d=>`<button data-a="give" data-w="${w}" data-n="${d}">👉 Отдать: ${d}</button>`).join('')}<button data-a="later" data-w="${w}">📞 Перезвоню через 10 мин</button><button data-a="no" data-w="${w}">❌ Отказать</button>${w==='main'?'<button data-a="todep" data-w="main">🧑‍💼 Передать заму</button>':'<button data-a="tomain" data-w="dep">👑 Вернуть главному</button>'}${w==='main'?'<button class="wait" data-a="newdrv" data-w="main">➕ Подключить водителя</button>':''}${route(o)}`;
 const workKb=c=>`<button data-a="arrive" data-c="${c}">📍 На месте</button><button data-a="finish" data-c="${c}">🏁 Выполнено</button>`;
 // таймер ожидания реакции
 let TM=null;
@@ -279,6 +325,8 @@ const bossDone=w=>{stopTimer();drop('d1');drop('d3');const o2=other(w);addMsg(BO
 $('flow').addEventListener('click',e=>{const tab=e.target.closest('.ftab');if(tab){document.querySelectorAll('.ftab').forEach(x=>x.classList.toggle('on',x===tab));tab.classList.remove('ping');document.querySelectorAll('.chat').forEach(c=>c.classList.toggle('on',c.id==='c-'+tab.dataset.ft));return}
   const b=e.target.closest('[data-a]');if(!b||!O)return;const a=b.dataset.a,w=b.dataset.w,c=w?BOSS[w].chat:null;
   if(a==='skip'){expire()}
+  else if(a==='todep'||a==='tomain'){const to=a==='todep'?'dep':'main';stopTimer();drop(c);
+    addMsg(c,`Заявка №${O.no} передана ${to==='dep'?'заму':'главному'}`,null,true);give2boss(to,to==='dep'?'главный передал вам заявку':'зам вернул вам заявку')}
   else if(a==='self'){bossDone(w);addMsg(c,`✅ Вы взяли заявку №${O.no}. Позвоните клиенту: ${esc(O.phone)}`,workKb(c)+route(O));addMsg('client',`🚚 Заявку №${O.no} взял водитель. Перезвонит в ближайшие минуты.`)}
   else if(a==='give'){bossDone(w);const n=b.dataset.n;O.giver=w;document.querySelector('#c-d2 .ch b').textContent='GRUZ · Водитель '+n;
     addMsg(c,`👉 Заявка №${O.no} отдана водителю ${n}, ждём, примет ли`,null,true);

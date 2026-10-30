@@ -257,9 +257,9 @@ function setupAC(id){const inp=$(id),ul=$('sug-'+id);let tmr=null,items=[],act=-
   inp.addEventListener('input',()=>{GEO[id]=null;updateRoute();clearTimeout(tmr);const q=inp.value.trim();if(q.length<3){close();return}
     tmr=setTimeout(async()=>{const my=++seq;
       // ищем везде, но адреса Нягани — наверху списка
-      const u=`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12&lat=${NYA.lat}&lon=${NYA.lon}&layer=house&layer=street&layer=city&layer=locality&layer=district`;
+      const u=`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12&lat=${NYA.lat}&lon=${NYA.lon}&layer=house&layer=street&layer=city&layer=locality&layer=district&lang=default`; // lang=default — русские названия при любом языке браузера
       try{const d=await (await fetch(u)).json();if(my!==seq)return;const seen=new Set();
-        items=d.features.map(f=>({...fmtAddr(f.properties),c:[f.geometry.coordinates[1],f.geometry.coordinates[0]],ny:(f.properties.city||f.properties.name||'')==='Нягань'}))
+        items=d.features.map(f=>({...fmtAddr(f.properties),c:[f.geometry.coordinates[1],f.geometry.coordinates[0]],ny:/^(Нягань|Nyagan)$/.test(f.properties.city||f.properties.name||'')}))
           .filter(x=>x.t&&!seen.has(x.t+x.sub)&&seen.add(x.t+x.sub)).sort((x,y)=>(y.ny-x.ny)).slice(0,6);
         ul.innerHTML=items.length?items.map((x,i)=>`<li data-i="${i}">${esc(x.t)}<small>${esc(x.sub)}</small></li>`).join(''):'<li style="cursor:default;color:var(--muted)">Не нашли, впишите как есть</li>';ul.classList.add('on')}catch(e){close()}},300)});
   ul.addEventListener('mousedown',e=>{const li=e.target.closest('li[data-i]');if(!li)return;e.preventDefault();const x=items[+li.dataset.i];
